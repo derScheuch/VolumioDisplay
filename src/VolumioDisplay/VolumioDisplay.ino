@@ -262,35 +262,26 @@ int setText(int offset) {
   float stepDivide = (maxDivide - 1.0) / divideSteps;
   int maxOffset = strlen(title) * 6 + 70;
 
-  if (offset < 10000) {
-    dma_display->setTextSize(1);
-    dma_display->setTextWrap(false);
-    float divide = maxDivide;
-    if (offset < divideSteps) {
-      divide = 1.0 + offset * stepDivide;
-    } else if (offset > maxOffset - divideSteps) {
-      divide = 1 + 0 + (maxOffset - (offset - 1)) * stepDivide;
-    }
-    printPicture(0, 7, divide);
-    printPicture(7, 8, 1.0 + 3 * (divide - 1) / 4);
-    printPicture(8, 9, 1.0 + (divide - 1) / 2);
-    printPicture(9, 10, 1.0 + (divide - 1) / 5);
-    dma_display->setCursor(63 - offset, 0);
-    dma_display->setTextColor(textColor);
-    dma_display->print(title);
-    if (offset > maxOffset) {
-      offset = -10;  // 10000;
-    }
-  } else if (offset < 10009) {
-    int height = 10008 - offset;
-    int index = height * 64 * 3;
-    for (int width = 0; width < 64; ++width) {
-      dma_display->drawPixelRGB888(width, height, pictureBuf[index], pictureBuf[index + 1], pictureBuf[index + 2]);
-      index += 3;
-    }
-  } else {
-    offset = -10;
+  
+  dma_display->setTextSize(1);
+  dma_display->setTextWrap(false);
+  float divide = maxDivide;
+  if (offset < divideSteps) {
+    divide = 1.0 + offset * stepDivide;
+  } else if (offset > maxOffset - divideSteps) {
+     divide = 1 + 0 + (maxOffset - (offset - 1)) * stepDivide;
   }
+  printPicture(0, 7, divide);
+  printPicture(7, 8, 1.0 + 3 * (divide - 1) / 4);
+  printPicture(8, 9, 1.0 + (divide - 1) / 2);
+  printPicture(9, 10, 1.0 + (divide - 1) / 5);
+  dma_display->setCursor(63 - offset, 0);
+  dma_display->setTextColor(textColor);
+  dma_display->print(title);
+  if (offset > maxOffset) {
+    offset = -10;  // 10000;
+  }
+  
   //Serial.print("millis for print:");
   printTime -= millis();
   //Serial.println(printTime);
