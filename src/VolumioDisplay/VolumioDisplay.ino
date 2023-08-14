@@ -8,15 +8,15 @@
 
 // enter yozr SSID for your WiFi
 //
-const char *ssid = "myWiFiName";
+const char *ssid = "";
 
 // enter your password for your WiFi 
 //
-const char *password = "myPassword";
+const char *password = "";
 
 // enter here the URL where you installed the proxy.php for reskaling the JPEGs
 // 
-const String proxyBaseUrl = "http://thebignas.local/index2.php?url=";
+const String proxyBaseUrl = "http://proxy.local/index2.php?url=";
 
 // enter here the url where you can access the REST API for your volumio
 // will be in most cases something like http://volumio.local
@@ -55,7 +55,6 @@ uint8_t pictureBuf[64 * 64 * 3 + 100] = { 0 };
 char title[300];
 
 void setup() {
-
   Serial.begin(115200);
   configureDisplay();
   connectToWiFi();
@@ -329,11 +328,65 @@ void configureDisplay() {
 }
 
 void setupWebServer() {
-  webServer.on("/", webServerRoot);
+  webServer.on("/push", webServerPush);
+  webServer.on("/setup",HTTP_GET, handleSetup);
+  webServer.on("/saveSetup", HTTP_POST, handleSaveSetup);
+  webServer.on("/saveWifi", HTTP_POST, handleSaveWifi);
   webServer.onNotFound(webServerNotFound);
   webServer.begin();
   Serial.println("HTTP server started");
 }
+
+void handleSetup() {
+   String html = "<html><body>";
+  html += "<form action='/saveSetup' method='POST'>";
+  html += "brightness: <input type='text' name='brightness'><br>";
+  html += "<input type='submit' value='Save'>";
+  html += "</form>";
+  html += "</body></html>";
+  webServer.send(200, "text/html", html);
+}
+
+void handleSaveSetup() {
+  char * endPtr;
+  char brightness[20];
+  String str = webServer.arg("brightness");
+  str.toCharArray(brightness, 20);
+  int nuumber = strtol(brightness, &endPtr, 10);
+  if (endPtr != brightness && *endPtr == '\0') {
+    if (nuumber > 0 && nuumber <255) {
+      dma_display->setBrightness8(nuumber);  //0-255
+    }
+  }
+     
+
+  webServer.send(200, "text/plain", "Data saved");
+}
+
+void handleRoot() {
+  String html = "<html><body>";
+  html += "<form action='/saveWifi' method='POST'>";
+  html += "SSID: <input type='text' name='ssid'><br>";
+  html += "Password: <input type='password' name='password'><br>";
+  html += "<input type='submit' value='Save'>";
+  html += "</form>";
+  html += "</body></html>";
+  webServer.send(200, "text/html", html);
+}
+
+void handleSaveWifi() {
+  String newSSID = webServer.arg("ssid");
+  String newPassword = webServer.arg("password");
+
+  // Save new SSID and password to EEPROM
+  //saveCredentials(newSSID, newPassword);
+
+  // Connect to the new WiFi network
+  //connectToWiFi();
+
+  webServer.send(200, "text/plain", "Data saved and connected to WiFi.");
+}
+
 
 void webServerNotFound() {
 
@@ -351,10 +404,11 @@ void webServerNotFound() {
   webServer.send(404, "text/plain", message);
 }
 
-void webServerRoot() {
+void webServerPush() {
   webServer.send(200, "text/plain", "getting state and reloading picture");
   mode = MODE_RELOAD_PICTURE;
 }
+
 
 void notifyVolumio() {
   WiFiClient client;
@@ -362,7 +416,7 @@ void notifyVolumio() {
   String ip = WiFi.localIP().toString();
   http.begin(client, pushNotificationUrl);
   http.addHeader("Content-Type", "application/json");  // Data to send with HTTP POST
-  String httpRequestData = "{\"url\": \"http://" + ip + "\"}";
+  String httpRequestData = "{\"url\": \"http://" + ip + "/push\"}";
   int httpResponseCode = http.POST(httpRequestData);
   Serial.print("HTTP Response code: ");
   Serial.println(httpResponseCode);
