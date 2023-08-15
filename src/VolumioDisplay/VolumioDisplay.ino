@@ -10,12 +10,12 @@
 //
 const char *ssid = "";
 
-// enter your password for your WiFi 
+// enter your password for your WiFi
 //
 const char *password = "";
 
 // enter here the URL where you installed the proxy.php for reskaling the JPEGs
-// 
+//
 const String proxyBaseUrl = "http://proxy.local/index2.php?url=";
 
 // enter here the url where you can access the REST API for your volumio
@@ -52,7 +52,7 @@ MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 // The picture Buffer (64 +x 64 pixel, each 3 bytes)
 uint8_t pictureBuf[64 * 64 * 3 + 100] = { 0 };
-char title[300];
+char currentTitle[300];
 
 void setup() {
   Serial.begin(115200);
@@ -110,14 +110,75 @@ int getVolumioStatus() {
     httpClient.end();
     String artist = doc["artist"];
     String album = doc["album"];
+    String service = doc["service"];
     String title2 = doc["title"];
-    title2 = replaceSpecialCharacters(title2);
-    title2.toCharArray(title, title2.length() > 300 ? 300 : title2.length() + 1);
-    String albumart = doc["albumart"];
+    String albumart = "";
+    if (service == "webradio") {
+      pictureLoaded = getPictureFromTitle(title2);
+    }
+    if (pictureLoaded == 0l) {
+      String a = doc["albumart"];
+      albumart = a;
+      pictureLoaded = getPicture(proxyBaseUrl + urlEncode(albumart));
+    }
 
-    pictureLoaded = getPicture(proxyBaseUrl + urlEncode(albumart));
+    title2 = replaceSpecialCharacters(title2);
+    title2.toCharArray(currentTitle, title2.length() > 299 ? 299 : title2.length() + 1);
 
     doc.clear();
+  }
+  return pictureLoaded;
+}
+
+int getPictureFromTitle(const String _title) {
+  Serial.println(_title);
+  String title = _title;
+  Serial.println(title);
+   title.replace(" ", "_");
+   Serial.println(title);
+   title.toLowerCase();
+   Serial.println(title);
+  int pictureLoaded = 0;
+  // we want to show the artist of the title
+  // most webradios provide sometzhing like "$artist - $title" in their title tag
+  int pos = title.indexOf("_-");
+   Serial.println(pos);
+  if (pos < 0) {
+    pos = title.indexOf("_/");  //sometimes it will be divided by a slash
+  }
+  Serial.println(title);
+  Serial.println(pos);
+    if (pos > 0) {
+    // this is just a blind guess.., jazz comes often with artists like "Duke Ellington & John Coltrane"
+    // but that normally leads to no result...
+    int pos2 = title.indexOf("_&");
+    
+    if (pos2 < 0) {
+      pos2 = title.indexOf("_,");
+    }
+    Serial.println(pos2);
+    if ( (pos2 > 0) && pos2 < pos) {
+       pictureLoaded = tryLoadAndCheckPicture("/tinyart/" + title.substring(0, pos2) + "/large");
+    }
+    if (!pictureLoaded) {
+      pictureLoaded = tryLoadAndCheckPicture("/tinyart/" + title.substring(0, pos) + "/large");
+    }
+  }
+  return pictureLoaded;
+}
+
+int tryLoadAndCheckPicture(String albumArt) {
+  Serial.println(albumArt);
+  int pictureLoaded = getPicture(proxyBaseUrl + urlEncode(albumArt));
+  if (pictureLoaded) {
+    int a = 0;
+    for (int i = 0; i < 400; ++i) {
+      a += pictureBuf[i];
+    }
+    if (a == 0) {
+      Serial.println("picture from tinyaert starts completely black... fallback");
+      pictureLoaded = 0;
+    }
   }
   return pictureLoaded;
 }
@@ -205,23 +266,23 @@ void calcTextColor() {
   r = pictureBuf[highesIndex];
   g = pictureBuf[highesIndex + 1];
   b = pictureBuf[highesIndex + 2];
-  
-  int level = (r+g+b) / 3;
 
-  if (level == 0) {
-    textColor = dma_display->color565(127,127,127);
-    return ;
+  int level = (r + g + b) / 3;
+
+  if (level < 20) {
+    textColor = dma_display->color565(127, 127, 127);
+    return;
   }
-  r = level + (r - level) *3/4;
-  b = level + (b - level) *3 /4;
-  g = level + (g - level) *3 /4;
- 
-  if (level < middle +20) {
+  r = level + (r - level) * 3 / 4;
+  b = level + (b - level) * 3 / 4;
+  g = level + (g - level) * 3 / 4;
+
+  if (level < middle + 20) {
     r = r * (middle + 20) / level;
     b = b * (middle + 20) / level;
     b = b * (middle + 20) / level;
   }
-  
+
   if (r > 255) {
     g = g * 255 / r;
     b = b * 255 / r;
@@ -242,7 +303,7 @@ void calcTextColor() {
 
 void printPicture(int fromLine, int toLine, float divide) {
   int index = fromLine * 64 * 3;
-   for (int height = fromLine; height < toLine; ++height) {
+  for (int height = fromLine; height < toLine; ++height) {
     for (int width = 0; width < 64; ++width) {
       if (divide == 1.0) {
         dma_display->drawPixelRGB888(width, height, pictureBuf[index], pictureBuf[index + 1], pictureBuf[index + 2]);
@@ -259,16 +320,16 @@ int setText(int offset) {
   int divideSteps = 64;
   float maxDivide = 3.0;
   float stepDivide = (maxDivide - 1.0) / divideSteps;
-  int maxOffset = strlen(title) * 6 + 70;
+  int maxOffset = strlen(currentTitle) * 6 + 70;
 
-  
+
   dma_display->setTextSize(1);
   dma_display->setTextWrap(false);
   float divide = maxDivide;
   if (offset < divideSteps) {
     divide = 1.0 + offset * stepDivide;
   } else if (offset > maxOffset - divideSteps) {
-     divide = 1 + 0 + (maxOffset - (offset - 1)) * stepDivide;
+    divide = 1 + 0 + (maxOffset - (offset - 1)) * stepDivide;
   }
   printPicture(0, 7, divide);
   printPicture(7, 8, 1.0 + 3 * (divide - 1) / 4);
@@ -276,11 +337,11 @@ int setText(int offset) {
   printPicture(9, 10, 1.0 + (divide - 1) / 5);
   dma_display->setCursor(63 - offset, 0);
   dma_display->setTextColor(textColor);
-  dma_display->print(title);
+  dma_display->print(currentTitle);
   if (offset > maxOffset) {
     offset = -10;  // 10000;
   }
-  
+
   //Serial.print("millis for print:");
   printTime -= millis();
   //Serial.println(printTime);
@@ -323,13 +384,13 @@ void configureDisplay() {
 
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   dma_display->begin();
-  dma_display->setBrightness8(180);  //0-255
+  dma_display->setBrightness8(120);  //0-255
   dma_display->clearScreen();
 }
 
 void setupWebServer() {
   webServer.on("/push", webServerPush);
-  webServer.on("/setup",HTTP_GET, handleSetup);
+  webServer.on("/setup", HTTP_GET, handleSetup);
   webServer.on("/saveSetup", HTTP_POST, handleSaveSetup);
   webServer.on("/saveWifi", HTTP_POST, handleSaveWifi);
   webServer.onNotFound(webServerNotFound);
@@ -338,7 +399,7 @@ void setupWebServer() {
 }
 
 void handleSetup() {
-   String html = "<html><body>";
+  String html = "<html><body>";
   html += "<form action='/saveSetup' method='POST'>";
   html += "brightness: <input type='text' name='brightness'><br>";
   html += "<input type='submit' value='Save'>";
@@ -348,17 +409,17 @@ void handleSetup() {
 }
 
 void handleSaveSetup() {
-  char * endPtr;
+  char *endPtr;
   char brightness[20];
   String str = webServer.arg("brightness");
   str.toCharArray(brightness, 20);
   int nuumber = strtol(brightness, &endPtr, 10);
   if (endPtr != brightness && *endPtr == '\0') {
-    if (nuumber > 0 && nuumber <255) {
+    if (nuumber > 0 && nuumber < 255) {
       dma_display->setBrightness8(nuumber);  //0-255
     }
   }
-     
+
 
   webServer.send(200, "text/plain", "Data saved");
 }
