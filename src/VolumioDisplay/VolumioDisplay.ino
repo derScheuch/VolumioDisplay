@@ -4,37 +4,16 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <UrlEncode.h>
-#include <WebServer.h>
-#include <StreamUtils.h>
-#include <EEPROM.h>
+
+
 #include "DisplayWebserver.h"
+#include "DisplayModel.h"
 
 // Define the address in EEPROM where the configuration will be stored
 #define DEBUG true
 
 
 
-
-//
-// CONFIGURATION
-//
-// Its alos possible to make this later via web configuration but you can do it
-// int the code, too...
-//
-// enter here the URL where you installed the proxy.php for reskaling the JPEGs
-const String _proxyBaseUrl = "http://proxy.local/proxy.php?url=";
-
-// enter here the url where you can access the REST API for your volumio
-// will be in most cases something like http://volumio.local
-//
-const String _volumioBaseUrl = "http://volumio.local";
-// enter the ssid of your network
-const String _ssid = "";
-// and the password
-const String _password = "";
-const String _startCommand = "http://volumio.local/api/v1/commands/?cmd=playplaylist&name=auto";;
-const String _buttonPressCommand_1 = "http://volumio.local/api/v1/commands/?cmd=toggle";
-    
 
 
 // dont change these unless volumio api changes
@@ -43,30 +22,15 @@ const String pushNotificationUrl = "/api/v1/pushNotificationUrls";
 const String volumeApiUrl = "/api/v1/commands/?cmd=volume&volume="; 
 
 
-struct Configuration {
-  String ssid;
-  String password;
-  String proxyBaseUrl;
-  String volumioBaseUrl;
-  String buttonPressCommand_1;
-  String buttonPressCommand_2;
-  String startCommand;
-  int textScrollWait;
-  int textDisplayWait;
-};
-
-Configuration configuration;
 
 
-#define MODE_IDLE 0
-#define MODE_RELOAD_PICTURE 1
-#define MODE_REPRINT_PICTURE 2
-#define MODE_PRINT_TITLE 3
-#define MODE_WAIT_FOR_WIFI_SETUP 4
 
-uint8_t loopingMode;
 
-WebServer webServer(80);
+
+
+
+
+
 
 
 
@@ -81,13 +45,13 @@ MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 
 // The picture Buffer (64 +x 64 pixel, each 3 bytes)
-uint8_t pictureBuf[64 * 64 * 3 + 100] = { 0 };
+
 
 
 char currentTitle[300];
 float currentMaxDivideRatio = 3.0;  // always between 1.2 and 3.0
 uint16_t currentTextColor;
-int currentBrightness;
+
 int currentVolume;
 int textScrollingOffset = 0;
 long milliSteps = 0;
@@ -103,16 +67,22 @@ long lastAnalogCahngedMillis = 0;
 #define ANALOG_READ_1 34
 #define ANALOG_READ_2 35
 
+DisplayModel *model;
+DisplayWebServer *webServer;
+
 void setup() {
   Serial.begin(115200);
-  loadConfiguration(configuration);
+  model = new DisplayModel();
+  webServer = new DisplayWebServer(model);
+  
+  //loadConfiguration(model->configuration);
   configureDisplay();
   pinMode(BUTTON_1, INPUT_PULLDOWN);
   pinMode(BUTTON_2, INPUT_PULLDOWN);
   if (connectToWiFi()) {
-    loopingMode = MODE_RELOAD_PICTURE;
+    model->loopingMode = MODE_RELOAD_PICTURE;
   } else {
-    loopingMode = MODE_WAIT_FOR_WIFI_SETUP;
+    model->loopingMode = MODE_WAIT_FOR_WIFI_SETUP;
   }
   lastAnalogRead1 = analogRead(ANALOG_READ_1) / 256;
   lastAnalogRead2 = analogRead(ANALOG_READ_2) / 256;
@@ -120,36 +90,36 @@ void setup() {
 
 
 void loop() {
-  webServer.handleClient();
-  if (loopingMode == MODE_RELOAD_PICTURE) {
+    webServer->handleCalls();
+  if (model->loopingMode == MODE_RELOAD_PICTURE) {
     if (getVolumioStatus() == 1) {
-      loopingMode = MODE_REPRINT_PICTURE;
+      model->loopingMode = MODE_REPRINT_PICTURE;
     } else {
       delay(1000);
     }
   }
-  if (loopingMode == MODE_REPRINT_PICTURE) {
+  if (model->loopingMode == MODE_REPRINT_PICTURE) {
     printPicture();
     calculateCurrentTextColor();
-    loopingMode = MODE_PRINT_TITLE;
+    model->loopingMode = MODE_PRINT_TITLE;
     textScrollingOffset = 0;
   }
-  if (loopingMode == MODE_PRINT_TITLE) {
-    if (millis() > milliSteps + configuration.textScrollWait) {
+  if (model->loopingMode == MODE_PRINT_TITLE) {
+    if (millis() > milliSteps + model->configuration->textScrollWait) {
       textScrollingOffset = setText(textScrollingOffset);
       milliSteps = millis();
       if (textScrollingOffset < 0) {
-        loopingMode = MODE_IDLE;
+        model->loopingMode = MODE_IDLE;
       }
     }
   }
-  if (loopingMode == MODE_WAIT_FOR_WIFI_SETUP) {
+  if (model->loopingMode == MODE_WAIT_FOR_WIFI_SETUP) {
     // just wait...
   }
-  if (loopingMode == MODE_IDLE) {
-    if (millis() > milliSteps + configuration.textDisplayWait * 1000) {
+  if (model->loopingMode == MODE_IDLE) {
+    if (millis() > milliSteps + model->configuration->textDisplayWait * 1000) {
       milliSteps = millis();
-      loopingMode = MODE_PRINT_TITLE;
+      model->loopingMode = MODE_PRINT_TITLE;
       textScrollingOffset = 0;
     }
   }
@@ -166,7 +136,7 @@ void handleInputs() {
     Serial.println(buttonState);
     lastStateButton1 = buttonState;
     if (buttonState == 0) {
-      makeSimpleGetCall(configuration.buttonPressCommand_1);
+      makeSimpleGetCall(model->configuration->buttonPressCommand_1);
     }
   }/*
   buttonState = digitalRead(BUTTON_2);
@@ -177,7 +147,7 @@ void handleInputs() {
     Serial.println(buttonState);
     lastStateButton2 = buttonState;
     if (buttonState == 0) {
-      makeSimpleGetCall(configuration.buttonPressCommand_2);
+      makeSimpleGetCall(configuration->buttonPressCommand_2);
     }
   }
   */
@@ -210,7 +180,7 @@ void handleInputs() {
 }
 void setVolume(int vol) {
   if (vol >= 0 && vol <= 100) {
-    makeSimpleGetCall(configuration.volumioBaseUrl + volumeApiUrl + vol);
+    makeSimpleGetCall(model->configuration->volumioBaseUrl + volumeApiUrl + vol);
   } else {
     Serial.print("VOLUNE CANT BE SET TO ");
     Serial.println(vol);
@@ -218,7 +188,7 @@ void setVolume(int vol) {
 }
 int getVolumioStatus() {
   HTTPClient httpClient;
-  httpClient.begin(configuration.volumioBaseUrl + stateUrl);
+  httpClient.begin(model->configuration->volumioBaseUrl + stateUrl);
   int httpCode = httpClient.GET();
   int pictureLoaded = 0;
   if (httpCode == 200) {
@@ -237,7 +207,7 @@ int getVolumioStatus() {
     if (pictureLoaded == 0l) {
       String a = doc["albumart"];
       albumart = a;
-      pictureLoaded = getPicture(configuration.proxyBaseUrl + urlEncode(albumart));
+      pictureLoaded = getPicture(model->configuration->proxyBaseUrl + urlEncode(albumart));
     }
 
     title2 = replaceSpecialCharacters(title2);
@@ -280,13 +250,13 @@ int getPictureFromTitle(const String _title) {
 int tryLoadAndCheckPicture(String albumArt) {
   Serial.print("tryLoadAndCheckPicture: ");
   Serial.println(albumArt);
-  int pictureLoaded = getPicture(configuration.proxyBaseUrl + urlEncode(albumArt));
+  int pictureLoaded = getPicture(model->configuration->proxyBaseUrl + urlEncode(albumArt));
   if (pictureLoaded) {
     // check if it is a valid picture and not a dummy one.
     // very simple guessing mechanism... checks if all pixels in the beginning are all black
     int a = 0;
     for (int i = 0; i < 400; ++i) {
-      a += pictureBuf[i];
+      a += model->pictureBuf[i];
     }
     if (a == 0) {
       Serial.println("picture from tinyaert starts completely black... fallback");
@@ -336,7 +306,7 @@ int getPicture(const String imageUrl) {
     while (httpClient.connected()) {
       size_t size = stream->available();
       if (size) {
-        int c = stream->readBytes(pictureBuf + index, size);
+        int c = stream->readBytes(model->pictureBuf + index, size);
         index += c;
       } else {
         break;
@@ -361,7 +331,7 @@ void calculateCurrentTextColor() {
   // calculate the hightes pixel and the medium level of brightness
   for (int height = 0; height < 8; ++height) {
     for (int width = 0; width < 64; ++width) {
-      long value = pictureBuf[index] * pictureBuf[index] + pictureBuf[index] * pictureBuf[index + 2] + pictureBuf[index + 2] * pictureBuf[index + 2];
+      long value = model->pictureBuf[index] * model->pictureBuf[index] + model->pictureBuf[index] * model->pictureBuf[index + 2] + model->pictureBuf[index + 2] * model->pictureBuf[index + 2];
       if (value > highesValue) {
         highesIndex = index;
         highesValue = value;
@@ -470,12 +440,12 @@ int setText(int textScrollingOffset) {
 int connectToWiFi() {
   Serial.println("Connecting to WiFi...");
 
-  if (configuration.password.length() == 0 || configuration.ssid.length() == 0) {
+  if (model->configuration->password.length() == 0 || model->configuration->ssid.length() == 0) {
     Serial.println("no configuration found... opening own AP");
     startOwnAP();
     return 0;
   }
-  WiFi.begin(configuration.ssid, configuration.password);
+  WiFi.begin(model->configuration->ssid, model->configuration->password);
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED && tries < 300) {
     Serial.println("Connecting to WiFi...");
@@ -532,107 +502,21 @@ void configureDisplay() {
   dma_display->clearScreen();
 }
 
-void setupWebServer() {
-  Serial.println("setupWebServer");
-  webServer.on("/push", webServerPush);
-  webServer.on("/setup", HTTP_GET, handleGETRequestSetup);
-  webServer.on("/setup", HTTP_POST, handlePOSTRequestSetup);
-  webServer.on("/saveWifi", HTTP_POST, handleSaveWifi);
-  webServer.on("/", HTTP_GET, handleSetupWifi);
-  webServer.onNotFound(webServerNotFound);
-  webServer.begin();
-  Serial.println("HTTP server started");
-}
 
-void handleGETRequestSetup() {
-  String configPage = CONFIG_PAGE;
-  configPage.replace("%PROXY_BASE_URL%", configuration.proxyBaseUrl);
-  configPage.replace("%VOLUMIO_BASE_URL%", configuration.volumioBaseUrl);
-  configPage.replace("%BUTTON_COMMAND%_1", configuration.buttonPressCommand_1);
-  configPage.replace("%BUTTON_COMMAND%_2", configuration.buttonPressCommand_2);
-  configPage.replace("%START_COMMAND%", configuration.startCommand);
 
-  configPage.replace("%SCROLL_WAIT%", String(configuration.textScrollWait));
-  configPage.replace("%TEXT_DISPLAY_WAIT%", String(configuration.textDisplayWait));
-  configPage.replace("%BRIGHTNESS%", String(currentBrightness));
-  webServer.send(200, "text/html", configPage);
-}
-
-void handlePOSTRequestSetup() {
-  String proxyBaseUrl = webServer.arg("proxyBaseUrl");
-  String volumioBaseUrl = webServer.arg("volumioBaseUrl");
-  String buttonCommand_1 = webServer.arg("buttonCommand_1");
-  String buttonCommand_2 = webServer.arg("buttonCommand_2");
-  String startCommand = webServer.arg("startCommand");
-  int scrollWait = constrain(webServer.arg("scrollWait").toInt(), 0, 201);
-  int textDisplayWait = constrain(webServer.arg("textDisplayWait").toInt(), 0, 201);
-  int brightness = constrain(webServer.arg("brightness").toInt(), 0, 255);
-
-  //if (strlen(proxyBaseUrl) > 0)
-  configuration.proxyBaseUrl = proxyBaseUrl;
-  //if (strlen(volumioBaseUrl) > 0)
-  configuration.volumioBaseUrl = volumioBaseUrl;
-
-  configuration.buttonPressCommand_1 = buttonCommand_1;
-  configuration.buttonPressCommand_2 = buttonCommand_2;
-  configuration.startCommand = startCommand;
-
-  if (scrollWait != 201)
-    configuration.textScrollWait = scrollWait;
-  if (textDisplayWait != 601)
-    configuration.textDisplayWait = textDisplayWait;
-  saveConfiguration(configuration);
-  setBrightness(brightness);
-  handleGETRequestSetup();
-}
 
 void setBrightness(int brightness) {
   if (brightness >= 0 && brightness < 180) {
-    currentBrightness = brightness;
+    model->currentBrightness = brightness;
     dma_display->setBrightness8(brightness);
   }
 }
 
 
-void handleSetupWifi() {
-  webServer.send(200, "text/html", NETWORK_PAGE);
-}
-
-void handleSaveWifi() {
-  String newSSID = webServer.arg("ssid");
-  String newPassword = webServer.arg("password");
-  configuration.password = newPassword;
-  configuration.ssid = newSSID;
-  saveConfiguration(configuration);
-  webServer.send(200, "text/plain", "Data saved and connected to WiFi.");
-  connectToWiFi();
-}
-
-
-void webServerNotFound() {
-
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += webServer.uri();
-  message += "\nMethod: ";
-  message += (webServer.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += webServer.args();
-  message += "\n";
-  for (uint8_t i = 0; i < webServer.args(); i++) {
-    message += " " + webServer.argName(i) + ": " + webServer.arg(i) + "\n";
-  }
-  webServer.send(404, "text/plain", message);
-}
-
-void webServerPush() {
-  webServer.send(200, "text/plain", "getting state and reloading picture");
-  loopingMode = MODE_RELOAD_PICTURE;
-}
 
 void startupCalls() {
   notifyVolumio();
-  makeSimpleGetCall(configuration.startCommand);
+  makeSimpleGetCall(model->configuration->startCommand);
 }
 
 int makeSimpleGetCall(String request) {
@@ -656,7 +540,7 @@ int notifyVolumio() {
   WiFiClient client;
   HTTPClient http;
   String ip = WiFi.localIP().toString();
-  http.begin(client, configuration.volumioBaseUrl + pushNotificationUrl);
+  http.begin(client, model->configuration->volumioBaseUrl + pushNotificationUrl);
   http.addHeader("Content-Type", "application/json");  // Data to send with HTTP POST
   String httpRequestData = "{\"url\": \"http://" + ip + "/push\"}";
   int httpResponseCode = http.POST(httpRequestData);
@@ -667,76 +551,3 @@ int notifyVolumio() {
 }
 
 
-// Function to save the configuration to EEPROM
-void saveConfiguration(const Configuration &config) {
-  Serial.println("saving config");
-  DynamicJsonDocument doc(300);
-  doc["ssid"] = config.ssid;
-  doc["password"] = config.password;
-  doc["vbu"] = config.volumioBaseUrl;
-  doc["pbu"] = config.proxyBaseUrl;
-  doc["tdw"] = config.textDisplayWait;
-  doc["tsw"] = config.textScrollWait;
-  doc["b1c"] = config.buttonPressCommand_1;
-  doc["b2c"] = config.buttonPressCommand_2;
-  doc["stc"] = config.startCommand;
-  EEPROM.begin(2048);
-  for (int L = 0; L < 300; ++L) EEPROM.write(L, 0);
-  EepromStream eepromStream(0, 2048);
-  serializeJson(doc, eepromStream);
-  EEPROM.commit();
-  EEPROM.end();
-  doc.clear();
-  Serial.println("config saved");
-}
-
-// Function to load the configuration from EEPROM
-void loadConfiguration(Configuration &config) {
-  Serial.println("Loading Config");
-  EEPROM.begin(2048);
-  delay(10);
-  int i = 0;
-  for (int i = 0; i < 600; ++i) {
-    pictureBuf[i] = EEPROM.read(i);
-  }
-  DynamicJsonDocument doc(300);
-  DeserializationError error = deserializeJson(doc, pictureBuf);
-  if (error) {
-    //loading a preset configurqtion
-    Serial.println("Deserialization of config falied");
-    config.password = _password;
-    config.ssid = _ssid;
-    if (config.volumioBaseUrl.length() == 0) {
-      config.volumioBaseUrl = _volumioBaseUrl;
-      config.proxyBaseUrl = _proxyBaseUrl;
-      config.startCommand = _startCommand; 
-      config.buttonPressCommand_1 = _buttonPressCommand_1;
-      config.textDisplayWait = 30;
-      config.textScrollWait = 80;
-    }
-  } else {
-    Serial.println("Deserialization of config SUCCESS");
-    config.ssid = doc["ssid"].as<String>();
-    config.password = doc["password"].as<String>();
-    config.volumioBaseUrl = doc["vbu"].as<String>();
-    config.proxyBaseUrl = doc["pbu"].as<String>();
-    config.buttonPressCommand_1 = doc["b1c"].as<String>();
-    config.buttonPressCommand_2 = doc["b2c"].as<String>();
-    config.startCommand = doc["stc"].as<String>();
-    config.textDisplayWait = doc["tdw"];
-    config.textScrollWait = doc["tsw"];
-  }
-#if defined(DEBUG)
-  Serial.println(config.ssid);
-  Serial.println(config.password);
-  Serial.println(config.volumioBaseUrl);
-  Serial.println(config.proxyBaseUrl);
-  Serial.println(config.buttonPressCommand_1);
-  Serial.println(config.buttonPressCommand_2);
-  Serial.println(config.startCommand);
-  Serial.println(config.textDisplayWait);
-  Serial.println(config.textScrollWait);
-#endif
-  EEPROM.end();
-  doc.clear();
-}

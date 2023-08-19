@@ -1,5 +1,27 @@
+#include "DisplayModel.h"
+#include <WebServer.h>
+
 #ifndef DISPLAYWEbSERVER
 #define DISPLAYWEbSERVER
+
+class DisplayWebServer {
+private:
+  DisplayModel *model;
+  WebServer *webServer;
+  
+public:
+  DisplayWebServer(DisplayModel *displayModel);
+  void handleCalls();
+  void handleGETRequestSetup();
+   void handlePOSTRequestSetup();
+   void handleSetupWifi();
+   void handleSaveWifi();
+   void handleNotFound();
+  void push();
+};
+
+
+
 const char CONFIG_PAGE[] = R"=====(
 <!DOCTYPE html>
 <html>
